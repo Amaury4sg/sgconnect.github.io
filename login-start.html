@@ -1,0 +1,154 @@
+<html>
+<head>
+<title>SG Connect login test</title>
+<style rel='stylesheet' type='text/css'>
+BODY { margin-top:32pt; }
+BODY, TABLE, BUTTON { font-family:Verdana; font-size:16pt; text-align:center; }
+TH, TD { padding:6pt; }
+P.footer { margin-top:5em; font-size:0.5em; text-align:left; border-top: 1px solid gray }
+</style>
+<script>
+var CONFIG={
+ 
+  prd:{
+    host: 'https://sso-uat.sgmarkets.com/sgconnect/oauth2/',
+    name:'UAT<br/>"sso.sgmarkets.com"', 
+    ac_cid:'TBD_authc', // for authcode
+    cid:'TBD_implicit' // implicit
+  }
+}
+function getParams() {
+  const opts={}
+  const elms=document.getElementsByTagName("input")
+  for(const elm of elms) {
+    if(elm.checked) opts[elm.name]=elm.value
+    if (elm.getAttribute("type") == "text") opts[elm.name]=elm.value //a text input type will never be checked
+  }
+  return opts
+}
+function signout() {
+  const opts=getParams()
+  let url=CONFIG[opts.env].host+'connect/endSession'
+  url+='?post_logout_redirect_uri=https://amaury4sg.github.io/sgconnect.github.io/login-start.html'
+  document.location.href=url
+}
+function authenticate() {
+  const opts=getParams()
+  if(opts.flow=='cc') {
+    document.location.href='login-ok.html#cc='+opts.env+'&scopes=profile'
+    return
+  }
+  let url=''
+  url+=CONFIG[opts.env].host+'authorize'
+  if(opts.internal=='true' && !CONFIG[opts.env].third_party) url=url.replace("https://", "https://internal.")
+  url+='?scope=openid%20profile'
+  url+='&nonce=A'
+  url+='&redirect_uri=https://amaury4sg.github.io/sgconnect.github.io/login-ok.html'
+  url+='&response_type=id_token%20'+opts.flow
+  if (opts.flow == 'code' && CONFIG[opts.env].third_party) {
+    // Our Azure config requires PKCE because we are a Single-Page Application (else error AADSTS9002325).
+    // For demo purpose we include here just a minimal impl with a non-random challenge and verifier.
+    url+='&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256'
+  }
+  if(opts.domainhint=='true') {url+='&domain_hint=socgen.com'}
+  if(opts.level!='seamless') url+='&acr_values='+opts.level
+  if(opts.prompt!='false') url+='&prompt='+opts.prompt
+  if(opts.forceauth!='false') url+='&ForceAuth=true'
+  if(opts.jsonclaim!='false') url+='&claims={ "id_token": {  "igg": {"essential": true},  "user_authorization": {"essential": true}} }'
+  //if(typeof opts.max_age !== 'undefined')
+  //if(opts.max_age!='') url+='&max_age='+opts.max_age
+  if( opts.max_age !== '') url+='&max_age='+opts.max_age
+  console.log("##### LOG #####")
+  console.log(opts.max_age)
+  console.log("##### END #####")  
+  if( opts.loginhint !== '') url+='&login_hint='+opts.loginhint
+  
+    //if(typeof opts.max_age !== 'undefined') {
+    //  alert('Variable "opts.max_age" is not undefined.');
+    //}
+    //if(typeof opts.max_age === 'undefined') {
+    //alert('Variable "opts.max_age" is undefined.');
+    //}
+  url+='&client_id='+(opts.flow=='code'?CONFIG[opts.env].ac_cid:CONFIG[opts.env].cid)
+  document.location.href=url
+}
+</script>
+</head>
+<body onload="do_init()">
+<h1>SG Connect login test</h1>
+<br/><br/>
+<table align="center">
+<tr><th>Environment</th><th>Flow</th><th>Level</th><th>Scope</th><th>Seclin or not Seclin</th><th>domain hint</th><th>prompt = login</th><th>Max age</th><th>forceauth = true</th><th>jsonclaim = true</th><th>login hint</th></tr>
+<tr>
+<td style="text-align:left">
+  <input type="radio" name="env" value="uat" checked> sso-uat.sgmarkets.com (UAT)<br>
+</td>
+<td style="text-align:left">
+  <input type="radio" name="flow" value="token" checked> implicit (default)<br>
+  <input type="radio" name="flow" value="code"> auth-code (TBD)<br>
+  <input type="radio" name="flow" value="cc"> client-credential (app to app, no user)<br>
+</td>
+<td style="text-align:left">
+  <input type="radio" name="level" value="seamless"> none (seamless)<br>
+  <input type="radio" name="level" value="L1"> L1 (cookie)<br>
+  <input type="radio" name="level" value="L2" checked> L2 (standard)<br>
+  <input type="radio" name="level" value="L3"> L3 (two factors)<br>
+  <input type="radio" name="level" value="L4"> L4 (UNIPASS/trustbuilder)<br>
+  <input type="radio" name="level" value="L4-VPN"> L4 VPN (UNIPASS/trustbuilder)<br>
+</td>
+<td style="text-align:left">
+  <input type="text" name="scopename" value="api.sgconnect-role.app.sgh"><br>
+</td>
+<td style="text-align:left">
+  <input type="radio" name="internal" value="false" checked>Standard<br>
+  <input type="radio" name="internal" value="true">Internal<br>
+</td>
+<td style="text-align:left">
+  <input type="radio" name="domainhint" value="false">No<br>
+  <input type="radio" name="domainhint" value="true">socgen.com<br>
+  <input type="radio" name="domainhint" value="true" checked>c9a7d621-4bc4-4407-b730-f428e656aa9e<br>
+</td>
+<td style="text-align:left">
+  <input type="radio" name="prompt" value="none">none<br>
+  <input type="radio" name="prompt" value="login">login<br>
+  <input type="radio" name="prompt" value="false" checked>No value<br>
+</td>
+<td style="text-align:left">
+  <input type="text" name="max_age" value="" size="20"><br> 
+  <!-- <input type="checkbox" name="max_age" value="1"/> Max Age: <input type="text" id="max_age" size="20"/> --> 
+</td>
+<td style="text-align:left">
+  <input type="radio" name="forceauth" value="false" checked>No<br>
+  <input type="radio" name="forceauth" value="true">Yes<br>
+</td>
+<td style="text-align:left">
+  <input type="radio" name="jsonclaim" value="false" checked>No<br>
+  <input type="radio" name="jsonclaim" value="true">Yes<br>
+</td>
+<td style="text-align:left">
+  <input type="text" name="loginhint" value="" size="20"><br> 
+  <!-- <input type="checkbox" name="loginhint" value="1"/> Max Age: <input type="text" id="max_age" size="20"/> --> 
+</td>
+</td>
+</tr>
+<tr>
+<td>
+  <button onclick="signout()">Sign-Out</button>
+</td>
+<td colspan="2">
+  <button onclick="authenticate()">Authenticate</button>
+</td>
+</tr>
+</table>
+<div>
+<br/>
+This is a test application, and the default value can change anytime
+<br/>
+</div>
+<p class="footer">
+  <a href="https://login.microsoftonline.com/logout.srf" target="_blank">azurelogout</a><br>
+  <a href='https://sso-uat.sgmarkets.com/#/logout'>UAT logout</a>
+  <a href='https://github.com/Amaury4sg/sgconnect.github.io/tree/main'>source code</a>
+</p>
+</body>
+</html>
