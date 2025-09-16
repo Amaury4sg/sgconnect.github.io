@@ -1,9 +1,320 @@
 <html>
 <head>
-<title>SG Connect login test</title>
+<title>Login result</title>
+<style rel='stylesheet' type='text/css'>
+BODY { margin-top:32pt; font-family:Verdana; font-size:16pt; text-align:center; }
+TABLE { text-align:center; border-collapse:collapse; }
+TH { font-family:Verdana; font-size:14pt; text-align:center; border:1px solid black; }
+TD { font-family:Monospace; font-size:10pt; text-align:left; border:1px solid black; }
+</style>
+<script>
+function tset(id,text) { document.getElementById(id).innerText=text }
+function hset(id,html) { document.getElementById(id).innerHTML=html.replace(/\,\"/g,'<br/>,"') }
+
+// these passwords are not sensitive, it's just a test app with no rights
+// use another set of client_id : any live client_id can call introspect with any token
+var envs={
+	// auth code
+	uat:{cid:'296a75ed-84b3-4a8d-9ee6-eec3d5eb0b85',sec:'thissecretdoesntprotectanythingcc',host:'https://sso-uat.sgmarkets.com/sgconnect/oauth2'}
+}
+var nu_retry=0
+var ui_retry=0
+var max_retry=2
+var retry_delay=250
+function parse_query_string(t) {
+  var res={}
+  var lst=t.split('&')
+  for(var i=0; i<lst.length; i++) {
+    var kv=lst[i].split('=')
+    res[kv[0]]=kv[1]
+  }
+  return res
+}
+
+function do_init() {
+  console.log('Launching the do_init !')
+  console.log('doc.location:',document.location,'referrer',document.referrer)
+  var res=parse_query_string(document.location.hash.substr(1))
+  console.log('query params:',res)
+
+  // value must be hom or prd
+  if(res.cc) return auth_client_cred(res)
+
+  // extract the url content
+  var t_url=''
+  for(var k in res){t_url+='<br/>'+k+': '+res[k]}
+  hset('all_url',t_url)
+
+  let env=null
+  let id_token=null
+  if(res.id_token) {
+     id_token=analyze_id_token(res.id_token)
+      if(id_token.iss.indexOf('sso.sgmarkets.com')>=0) env='prd'
+      if(id_token.iss.indexOf('sso-uat.sgmarkets.com')>=0) env='uat'
+  }
+  if(!env) {
+     // try to detect environment from referrer if no id_token
+     if(!document.referrer) {
+	  console.log('There is no document.referrer !?')
+	  return
+     }
+     if(document.referrer.indexOf('sso-uat.sgmarkets.com')>=0) env='uat'
+//     if(document.referrer.indexOf('sgconnect-hom')>=0) env='hom'
+
+     if(!env) {
+       console.log('Unable to retrieve env from referrer', document.referrer)
+       return
+     }
+  }
+
+  console.log('env from the referrer : ' + env)
+  var creds=envs[env]
+  var oauth2_url=creds.host
+  console.log('oauth2_url: ' + oauth2_url)
+  console.log('res.code: ' + res.code)
+    
+  if(res.code) {
+	get_token_from_code(res.code, oauth2_url, creds)
+  }
+  else {
+	//window.setTimeout(()=>{},200)
+	analyze_access_token(res.access_token, oauth2_url, creds)
+  }
+}
+
+function analyze_access_token(access_token, oauth2_url, creds) {
+  if(!access_token) return tset('status','Oups, some error occured !<br/><br/>'+res.error_description)
+  tset('status','Login Successful !')
+  analyze_jwt_at(access_token)
+  if (creds.third_party) {
+    get_userinfo('https://graph.microsoft.com/oidc', access_token)
+  } else {
+    get_tokeninfo(oauth2_url, access_token)
+    get_userinfo(oauth2_url, access_token)
+    get_introspect(oauth2_url, access_token, creds)
+    get_tokeninfo_via_bearer(oauth2_url, access_token, 'bearer_tokeninfo')
+  }
+}
+
+function extract_jwt_token(jwt) {
+  const parts=jwt.split('.')
+  const resp = { header:atob(parts[0]), content:atob(parts[1]) }
+  resp.t='Header:<br/>'+resp.header+'<br/><br/>Content:<br/>'+resp.content
+  resp.obj = JSON.parse(resp.content)
+  if(resp.obj.auth_time) resp.t+='<br>User Session created (auth_time): '+new Date(resp.obj.auth_time*1000)
+  if(resp.obj.iat) resp.t+='<br>AccessToken created (iat): '+new Date(resp.obj.iat*1000)
+  if(resp.obj.nbf) resp.t+='<br>AccessToken not before (nbf): '+new Date(resp.obj.nbf*1000)
+  if(resp.obj.exp) resp.t+='<br>AccessToken expires (exp): '+new Date(resp.obj.exp*1000)
+  return resp
+}
+
+function analyze_jwt_at(access_token) {
+  if(!access_token || access_token.length<64) {
+    hset('all_jwtat','Seems not being a JWT access_token')
+    return
+  }
+  const o=extract_jwt_token(access_token)
+  hset('all_jwtat', o.t)
+  console.log('JWT access_token content:',o.obj)
+}
+	
+function analyze_id_token(id_token) {
+  const o=extract_jwt_token(id_token)
+  hset('all_jwt',o.t)
+  tset('email',o.obj.sub)
+  console.log('JWT id_token content:',o.obj)
+  return o.obj
+}
+	
+function get_token_from_code(code, oauth2_url, creds) {
+	var data='grant_type=authorization_code&code='+code+'&client_id='+creds.cid+'&redirect_uri=https://sgithub.fr.world.socgen/pages/sgConnect4All/login-ok.html'
+	var url=oauth2_url + (creds.third_party ? '/token' : '/access_token')
+
+	if (creds.third_party) {
+		// Our Azure config requires PKCE because we are a Single-Page Application (else error AADSTS9002325).
+		// For demo purpose we include here just a minimal impl with a non-random challenge and verifier.
+		data += '&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
+	}
+
+	var xhr = new XMLHttpRequest()
+	xhr.open('POST', url, true)
+	xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded')
+	if (creds.sec) xhr.setRequestHeader('Authorization', 'Basic ' + btoa(creds.cid + ':' + creds.sec))
+	xhr.onreadystatechange = function() {
+		if (xhr.readyState != XMLHttpRequest.DONE) return
+		if (xhr.status >= 200 && xhr.status < 300) {
+			hset('all_authcode', xhr.responseText)
+			var obj = JSON.parse(xhr.responseText)
+			console.log('token response from code: ', obj)
+			// window.setTimeout(()=>{analyze_access_token(obj.access_token, oauth2_url, creds)},200)
+			analyze_access_token(obj.access_token, oauth2_url, creds)
+		} else {
+			hset('all_authcode', 'Failed as ' + xhr.status + ':<br/>' + xhr.responseText)
+		}
+	}
+	xhr.send(data)
+}
+
+// function used previously to work around CORS restrictions
+function call_via_proxy(verb,url,body,headers,cb){
+  // build proxy request
+  let cnt=verb+'\n'+url+'\n'
+  for(var key in headers) {
+    cnt+=key+':'+headers[key]+'\n'
+  }
+  cnt+='\n'+(body?body:'')
+  var xhr=new XMLHttpRequest()
+  xhr.open('POST','https://api.fr.world.socgen/report/dyn/pxy/',true)
+  xhr.onreadystatechange=function(){
+	if(xhr.readyState!=XMLHttpRequest.DONE) return
+	 var resp={
+		 status:xhr.getResponseHeader("X-WAS-STATUS"),
+		 text:xhr.responseText
+	 }
+        cb(resp)
+  }
+  xhr.send(cnt)
+}
+	
+// do a simple cc flow from the browser
+function auth_client_cred(args) {
+    console.log('Launching auth_client_cred, arg: ' + args)
+  var creds=envs[args.cc]
+  console.log('envs : ' + envs[args.cc])
+
+  var cid=args.cid?args.cid:creds.cid
+  var sec=args.sec?args.sec:creds.sec
+  var oauth2_url=creds.host
+  var xhr=new XMLHttpRequest()
+  xhr.open('POST',oauth2_url+'/access_token?grant_type=client_credentials&scope='+args.scopes,true)
+  xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded')
+  xhr.setRequestHeader('Authorization','Basic '+btoa(cid+':'+sec))
+  xhr.onreadystatechange=function(){
+	if(xhr.readyState!=XMLHttpRequest.DONE) return
+	if(xhr.status>=200 && xhr.status<300) {
+		var obj=JSON.parse(xhr.responseText)
+        	console.log('cc token: ', obj)
+		hset('all_url',xhr.responseText)
+		analyze_jwt_at(obj.access_token)
+
+		  get_tokeninfo(oauth2_url, obj.access_token)
+		  get_userinfo(oauth2_url, obj.access_token)
+		  get_introspect(oauth2_url, obj.access_token, creds)
+
+      	}
+      	else {
+        	hset('all_url','Failed as '+xhr.status+':<br/>'+xhr.responseText)
+      	}
+  }
+  xhr.send()
+}
+
+function get_introspect(oauth2_url, access_token, creds) {
+  var xhr3=new XMLHttpRequest()
+  xhr3.open('POST',oauth2_url+'/introspect',true)
+  xhr3.setRequestHeader('Content-Type','application/x-www-form-urlencoded')
+  xhr3.setRequestHeader('Authorization','Basic '+btoa(creds.cid+':'+creds.sec))
+  xhr3.onreadystatechange=function(){
+	if(xhr3.readyState!=XMLHttpRequest.DONE) return
+	if(xhr3.status>=200 && xhr3.status<300) {
+		var obj=JSON.parse(xhr3.responseText)
+        	console.log('introspect: ', obj)
+		hset('all_introspect',xhr3.responseText)
+      	}
+      	else {
+        	hset('all_introspect','Failed as '+xhr3.status+':<br/>'+xhr3.responseText)
+      	}
+  }
+  xhr3.send('token='+access_token)
+}
+function get_userinfo(oauth2_url, access_token) {
+  var xhr=new XMLHttpRequest()
+  xhr.open('GET',oauth2_url+'/userinfo',true)
+  xhr.setRequestHeader('Authorization','Bearer '+access_token)
+  xhr.onreadystatechange=function(){
+	if(xhr.readyState!=XMLHttpRequest.DONE) return
+	if(xhr.status>=200 && xhr.status<300) {
+		var obj=JSON.parse(xhr.responseText)
+        	console.log('userinfo: ', obj)
+		tset('username',obj.name)
+		let t=xhr.responseText
+		if(ui_retry) t+='<br>After retries: '+ui_retry
+		hset('all_userinfo',t)
+      	}
+      	else {
+		console.log('Failed userinfo as',xhr.status,':<br/>',xhr.responseText,'<br/>',new Date())
+        	hset('all_userinfo','Failed as '+xhr.status+':<br/>'+xhr.responseText+'<br/>'+new Date()+', retries: '+ui_retry)
+		if(ui_retry<max_retry) {
+		  ui_retry++
+		  window.setTimeout(()=>{get_userinfo(oauth2_url, access_token)},retry_delay)
+		}
+
+	}
+  }
+  xhr.send()
+}
+
+function get_tokeninfo(oauth2_url, access_token) {
+  console.log ('get_tokeninfo')
+  console.log ('oauth2_url : ' + oauth2_url)
+  console.log ('access_token : ' + access_token)
+  var xhr=new XMLHttpRequest()
+  xhr.open('GET',oauth2_url+'/tokeninfo?access_token='+access_token,true)
+  xhr.onreadystatechange=function(){
+	if(xhr.readyState!=XMLHttpRequest.DONE) return
+	if(xhr.status>=200 && xhr.status<300) {
+		console.log('tokeninfo: ', JSON.parse(xhr.responseText))
+		let t=xhr.responseText
+		if(nu_retry) t+='<br>After retries: '+nu_retry
+		hset('all_tokeninfo',t)
+      	}
+      	else {
+		console.log('Failed tokeninfo as',xhr.status,':<br/>',xhr.responseText,'<br/>',new Date())
+        	hset('all_tokeninfo','Failed as '+xhr.status+':<br/>'+xhr.responseText+'<br/>'+new Date()+', retries: '+nu_retry)
+		if(nu_retry<max_retry) {
+		  nu_retry++
+		  window.setTimeout(()=>{get_tokeninfo(oauth2_url, access_token)},retry_delay)
+		}
+      	}
+  }
+  xhr.send()
+}
+function get_tokeninfo_via_bearer(oauth2_url, access_token, element_id) {
+  var xhr=new XMLHttpRequest()
+  xhr.open('GET',oauth2_url+'/tokeninfo',true)
+  xhr.setRequestHeader('Authorization','Bearer '+access_token)
+  xhr.onreadystatechange=function(){
+	if(xhr.readyState!=XMLHttpRequest.DONE) return
+	if(xhr.status>=200 && xhr.status<300) {
+		console.log('tokeninfo via bearer in', element_id, ':', JSON.parse(xhr.responseText))
+		hset(element_id,xhr.responseText)
+      	}
+      	else {
+        	hset(element_id,'Failed as '+xhr.status+':<br/>'+xhr.responseText)
+      	}
+  }
+  xhr.send()
+}
+</script>
 </head>
-<p>
-It works !
+<body onload="do_init()">
+<div id='status'></div>
+<div id='email'></div>
+<div id='username'></div>
+<div><a href="login-test.html">do another login</a></div>
+<br/><br/>
+<table>
+<tr><th>callback hash</th><td id='all_url'></td></tr>
+<tr><th>tokeninfo</th><td id='all_tokeninfo'></td></tr>
+<tr><th>JWT access_token</th><td id='all_jwtat'></td></tr>
+<tr><th>JWT id_token</th><td id='all_jwt'></td></tr>
+<tr><th>userinfo</th><td id='all_userinfo'></td></tr>
+<tr><th>introspect</th><td id='all_introspect'></td></tr>
+<tr><th>authcode</th><td id='all_authcode'></td></tr>
+<tr><th>tokeninfo (via bearer)</th><td id='bearer_tokeninfo'></td></tr>
+</table>
+<p class="footer">
+  <a href='https://github.com/Amaury4sg/sgconnect.github.io/tree/main'>source code</a>
 </p>
 </body>
 </html>
